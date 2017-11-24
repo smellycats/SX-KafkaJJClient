@@ -102,7 +102,25 @@ class ConsulAPI(object):
             self.status = False
             raise
 
-    def get_lock(self, uuid, data):
+    def get_lock(self, uuid, data, item):
+        """获取锁成功返回True,失败返回False,session过期返回500错误"""
+        url = 'http://{0}:{1}/v1/kv/{2}lock{4}?acquire={3}'.format(
+            self.host, self.port, self.path, uuid, item)
+        try:
+            r = requests.put(url, data=data)
+            if r.status_code == 200:
+                return json.loads(r.text)
+            elif r.status_code == 500:
+                return None
+            else:
+                self.status = False
+                raise Exception('url: {url}, status: {code}, {text}'.format(
+                    url=url, code=r.status_code, text=r.text))
+        except Exception as e:
+            self.status = False
+            raise
+
+    def get_lock2(self, uuid, data):
         """获取锁成功返回True,失败返回False,session过期返回500错误"""
         url = 'http://{0}:{1}/v1/kv/{2}lock?acquire={3}'.format(
             self.host, self.port, self.path, uuid)
