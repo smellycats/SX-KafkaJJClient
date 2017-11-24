@@ -33,22 +33,39 @@ class UploadData(object):
 
         self.local_ip = socket.gethostbyname(socket.gethostname())  # 本地IP
 
+        self.partitions = (96, 4)       # 分区数
+        self.item = None
+        self.part_list = []
 
     def get_lock(self):
         """获取锁"""
+        p = False
         if self.uuid is None:
             self.uuid = self.con.put_session(self.ttl, self.lock_name)['ID']
             self.session_time = time.time()
-        p = False
+            p = True
         # 大于一定时间间隔则更新session
-        # t = time.time() - self.session_time
-        if (time.time() - self.session_time) > (self.ttl - 10):
+        t = time.time() - self.session_time
+        if t > (self.ttl - 5):
             self.con.renew_session(self.uuid)
             self.session_time = time.time()
             p = True
-        l = self.con.get_lock(self.uuid, self.local_ip)
+        if self.item is None:
+            for i in range(self.partitions[1]):
+                l = self.con.get_lock(self.uuid, self.local_ip, i)
+                if l == None:
+                    self.uuid = None
+                    return False
+                if l:           # l是True
+                    self.item = i
+                    self.part_list = list(range(self.partitions[0]))[i::self.partitions[1]]
+                    break
+        else:
+            l = self.con.get_lock(self.uuid, self.local_ip, self.item)
         if p:
-            print(self.uuid, l)
+            lock_msg = '{0} {1} {2}'.format(self.uuid, l, self.item, self.part_list)
+            print(lock_msg)
+            logger.info(lock_msg)
         # session过期
         if l == None:
             self.uuid = None
@@ -58,8 +75,8 @@ class UploadData(object):
     def handling_data(self):
         info = []
         offsets = {}
-        for i in range(400):
-            msg = self.kc.c.poll(0.01)
+        for i in range(200):
+            msg = self.kc.c.poll(0.005)
         
             if msg is None:
                 continue
@@ -100,7 +117,9 @@ class UploadData(object):
                 value = {'timestamp': t, 'message': i}
                 self.kp.produce_info(key=None, value=json.dumps(value), cb=acked)
             self.kp.flush()
-            print('info={0}, lost_msg={1}'.format(len(info), len(lost_msg)))
+            info_msg = 'info={0}, lost_msg={1}'.format(len(info), len(lost_msg))
+            print(info_msg)
+            logger.info(info_msg)
             if len(lost_msg) > 0:
                 return len(lost_msg)
             self.kc.c.commit(async=False)
@@ -119,6 +138,7 @@ class UploadData(object):
                     continue
                 if self.kc is None:
                     self.kc = KafkaConsumer(**dict(self.my_ini['kafka_consumer']))
+                    self.kc.assign(self.part_list)
                 n = self.handling_data()
                 if n > 0:
                     time.sleep(15)
