@@ -5,6 +5,7 @@ import socket
 
 import arrow
 
+import helper
 from helper_consul import ConsulAPI
 from helper_kafka_consumer import KafkaConsumer
 from helper_kafka_producer import KafkaProducer
@@ -25,6 +26,7 @@ class UploadData(object):
         self.kc = None
         self.kp = KafkaProducer(**dict(self.my_ini['kafka_producer']))
         self.con = ConsulAPI()
+        self.con.path = dict(self.my_ini['consul'])['path']
 
         self.uuid = None                    # session id
         self.session_time = time.time()     # session生成时间戳
@@ -63,7 +65,7 @@ class UploadData(object):
         else:
             l = self.con.get_lock(self.uuid, self.local_ip, self.item)
         if p:
-            lock_msg = '{0} {1} {2}'.format(self.uuid, l, self.item, self.part_list)
+            lock_msg = '{0} {1} {2} {3}'.format(self.uuid, l, self.item, self.part_list)
             print(lock_msg)
             logger.info(lock_msg)
         # session过期
@@ -86,15 +88,17 @@ class UploadData(object):
                 i = json.loads(msg.value().decode('utf-8'))
                 item = {
                     'kkdd_id': i['KKBH'],
+                    'kkdd': helper.KKBH.get(i['KKBH'], ''),
                     'fxbh_id': int(i['FXBH']),
                     'jgsj': arrow.get(i['JGSJ'], 'YYYY/MM/DD/HH/mm/ss').format('YYYY-MM-DD HH:mm:ss'),
                     'cdbh': int(i['CDBH']),
-                    'hphm': i['HPHM'],
+                    'hphm': i['HPHM'].encode('utf-8').decode('unicode_escape'),
                     'hpys_id': int(i['HPYS']),
                     'clsd': i['CLSD'],
                     'clxs': i['CLXS'],
                     'txsl': i['TXSL'],
                     'imgurl': i['TX1'],
+                    'imgurl6': i['TX6'],
                     'csys': i['CSYS'],
                     'cllx': i['CLLX'],
                     'hpzl': i['HPZL']
@@ -117,14 +121,12 @@ class UploadData(object):
                 value = {'timestamp': t, 'message': i}
                 self.kp.produce_info(key=None, value=json.dumps(value), cb=acked)
             self.kp.flush()
-            info_msg = 'info={0}, lost_msg={1}'.format(len(info), len(lost_msg))
-            print(info_msg)
-            logger.info(info_msg)
             if len(lost_msg) > 0:
                 return len(lost_msg)
             self.kc.c.commit(async=False)
-            print(offsets)
-            logger.info(offsets)
+            info_msg = 'info={0}, lost_msg={1}, offset={2}'.format(len(info), len(lost_msg), offsets)
+            print(info_msg)
+            logger.info(info_msg)
             return 0
 
     def main_loop(self):
@@ -134,6 +136,8 @@ class UploadData(object):
                     if self.kc is not None:
                         del self.kc
                         self.kc = None
+                    self.item = None
+                    self.part_list = []
                     time.sleep(2)
                     continue
                 if self.kc is None:
